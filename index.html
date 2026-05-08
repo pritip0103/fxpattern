@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FXPattern.AI</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lightweight-charts/4.1.3/lightweight-charts.standalone.production.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap');
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -37,6 +37,7 @@ button{cursor:pointer;transition:all .2s;font-family:'Share Tech Mono',monospace
 .badge{position:absolute;bottom:8px;right:8px;font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dm);background:rgba(8,12,16,.9);padding:2px 7px;border:1px solid var(--bd);}
 .rfEl{position:absolute;top:8px;right:8px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dm);}
 .tfl{position:absolute;top:62px;left:14px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--gd);pointer-events:none;z-index:10;}
+#chartDiv{width:100%;height:100%;}
 .rp{border-left:1px solid var(--bd);background:var(--pn);display:flex;flex-direction:column;overflow:hidden;}
 .ph{padding:12px 16px;border-bottom:1px solid var(--bd);font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--ac);letter-spacing:3px;display:flex;align-items:center;justify-content:space-between;}
 .ph-sub{font-size:8px;color:var(--gn);}
@@ -82,7 +83,7 @@ button{cursor:pointer;transition:all .2s;font-family:'Share Tech Mono',monospace
   <div class="logo">FX<span>PATTERN</span>.AI</div>
   <div class="hright">
     <div class="lpill"><div class="ldot"></div><span id="feedSt">CONNECTING</span></div>
-    <span style="color:var(--dm);font-size:9px;">DATA: <span style="color:var(--gn);">ALPHA VANTAGE · REAL OHLC</span></span>
+    <span style="color:var(--dm);font-size:9px;">DATA: <span style="color:var(--gn);">TWELVE DATA · REAL OHLC</span></span>
     <span style="color:var(--dm);font-size:9px;" id="clockEl">--:--:-- UTC</span>
   </div>
 </header>
@@ -108,20 +109,20 @@ button{cursor:pointer;transition:all .2s;font-family:'Share Tech Mono',monospace
       </div>
       <div class="tfl" id="tfl">-- · -- CANDLES</div>
       <div class="rfEl" id="rfEl">↻ --s</div>
-      <canvas id="myChart"></canvas>
-      <div class="badge" id="badge">ALPHA VANTAGE · REAL MARKET DATA</div>
+      <div id="chartDiv"></div>
+      <div class="badge" id="badge">TWELVE DATA · REAL CANDLESTICKS</div>
     </div>
   </div>
   <div class="rp">
-    <div class="ph"><span>◈ PATTERN ANALYSIS</span><span class="ph-sub">✓ REAL DATA · NO CORS</span></div>
+    <div class="ph"><span>◈ PATTERN ANALYSIS</span><span class="ph-sub">✓ REAL CANDLES</span></div>
     <div class="pc" id="pc">
       <div class="fi">
-        <div><span class="k">SOURCE  </span><span class="vg">Alpha Vantage via serverless proxy</span></div>
-        <div><span class="k">CORS    </span><span class="vg">Zero — server-side fetch, no blocks</span></div>
-        <div><span class="k">DATA    </span><span class="vg">Real OHLC candles — matches MT4/MT5</span></div>
-        <div><span class="k">REFRESH </span><span class="v">Every 5 minutes automatically</span></div>
+        <div><span class="k">SOURCE  </span><span class="vg">Twelve Data — Real OHLC candles</span></div>
+        <div><span class="k">CHART   </span><span class="vg">Real candlesticks — green/red bodies</span></div>
+        <div><span class="k">MATCHES </span><span class="vg">FundedNext MT4/MT5 prices</span></div>
+        <div><span class="k">HISTORY </span><span class="v">150 candles per timeframe</span></div>
       </div>
-      <div class="es"><div class="ei">◎</div><div>REAL DATA LOADING...<br><br>SELECT PAIR & TIMEFRAME<br>THEN HIT ▶ ANALYZE<br><br>DETECTS PATTERNS FROM<br>HOURS & DAYS OF HISTORY</div></div>
+      <div class="es"><div class="ei">◎</div><div>REAL CANDLESTICKS LOADING...<br><br>SELECT PAIR & TIMEFRAME<br>THEN HIT ▶ ANALYZE<br><br>AI DETECTS PATTERNS FROM<br>REAL MARKET HISTORY</div></div>
     </div>
     <div class="sumbar" id="sb" style="display:none">
       <div class="sitem"><span class="sl2">BIAS </span><span class="sv" id="sBias">--</span></div>
@@ -134,15 +135,15 @@ button{cursor:pointer;transition:all .2s;font-family:'Share Tech Mono',monospace
 <script>
 const TF_LABEL={'1min':'1 MIN','5min':'5 MIN','15min':'15 MIN','60min':'1 HOUR'};
 let pair='EURUSD',dec=5,tf='1min',candles=[],liveRate=null;
-let chart=null,tickT=null,cdT=null,cd=300;
+let lwChart=null,candleSeries=null,tickT=null,cdT=null,cd=300;
 let cache={};
 
 setInterval(()=>{const n=new Date();document.getElementById('clockEl').textContent=n.toUTCString().slice(17,25)+' UTC';},1000);
 
+// ── FETCH via serverless function ──────────────────
 async function fetchData(){
   const key=pair+tf;
   if(cache[key]&&Date.now()-cache[key].ts<300000) return cache[key].data;
-  // Call our own serverless function — no CORS issue
   const url=`/.netlify/functions/forex?pair=${pair}&interval=${tf}`;
   const res=await fetch(url);
   if(!res.ok) throw new Error('Server error '+res.status);
@@ -152,43 +153,104 @@ async function fetchData(){
   return json.candles;
 }
 
+// ── LOAD ───────────────────────────────────────────
 async function loadData(){
   document.getElementById('feedSt').textContent='FETCHING';
   try{
     candles=await fetchData();
     liveRate=candles[candles.length-1].c;
     document.getElementById('feedSt').textContent='LIVE';
-    document.getElementById('badge').textContent=`ALPHA VANTAGE · ${candles.length} REAL CANDLES · ${TF_LABEL[tf]}`;
+    document.getElementById('badge').textContent=`TWELVE DATA · ${candles.length} REAL CANDLES · ${TF_LABEL[tf]}`;
     document.getElementById('tfl').textContent=`${TF_LABEL[tf]} · ${candles.length} CANDLES`;
-    updatePrice();renderChart();startTicks();startCD();
+    updatePrice();
+    renderCandleChart();
+    startTicks();
+    startCD();
   }catch(e){
     document.getElementById('feedSt').textContent='ERR';
-    document.getElementById('pc').innerHTML=`<div class="ebox">⚠ ${e.message}<br><br>Make sure you have deployed this to Netlify. The serverless function handles the data fetch.</div>`;
+    document.getElementById('pc').innerHTML=`<div class="ebox">⚠ ${e.message}<br><br>Check your Netlify deployment and Twelve Data API key.</div>`;
   }
 }
 
+// ── PRICE DISPLAY ──────────────────────────────────
 function updatePrice(){
   if(!liveRate||!candles.length)return;
   const first=candles[0].o,ch=liveRate-first,pct=(ch/first*100).toFixed(3),s=ch>=0?'+':'';
   document.getElementById('pd').textContent=liveRate.toFixed(dec);
   const el=document.getElementById('pm');
-  el.textContent=`${s}${ch.toFixed(dec)}  (${s}${pct}%)  · REAL`;
+  el.textContent=`${s}${ch.toFixed(dec)}  (${s}${pct}%)  · LIVE`;
   el.className='pmeta '+(ch>=0?'up':'dn');
 }
 
+// ── CANDLESTICK CHART using Lightweight Charts ─────
+function renderCandleChart(){
+  const container=document.getElementById('chartDiv');
+
+  // Destroy existing chart
+  if(lwChart){lwChart.remove();lwChart=null;candleSeries=null;}
+
+  lwChart=LightweightCharts.createChart(container,{
+    width:container.clientWidth,
+    height:container.clientHeight,
+    layout:{background:{color:'#0d1117'},textColor:'#4a6070'},
+    grid:{vertLines:{color:'#1a2332'},horzLines:{color:'#1a2332'}},
+    crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
+    rightPriceScale:{borderColor:'#1a2332',textColor:'#4a6070'},
+    timeScale:{borderColor:'#1a2332',textColor:'#4a6070',timeVisible:true,secondsVisible:false},
+    handleScroll:true,
+    handleScale:true,
+  });
+
+  candleSeries=lwChart.addCandlestickSeries({
+    upColor:'#00ff88',
+    downColor:'#ff3366',
+    borderUpColor:'#00ff88',
+    borderDownColor:'#ff3366',
+    wickUpColor:'#00ff88',
+    wickDownColor:'#ff3366',
+  });
+
+  // Format candles for Lightweight Charts
+  const chartData=candles.map(c=>({
+    time: Math.floor(new Date(c.t).getTime()/1000),
+    open:  +c.o.toFixed(dec),
+    high:  +c.h.toFixed(dec),
+    low:   +c.l.toFixed(dec),
+    close: +c.c.toFixed(dec)
+  }));
+
+  candleSeries.setData(chartData);
+  lwChart.timeScale().fitContent();
+
+  // Resize handler
+  new ResizeObserver(()=>{
+    if(lwChart) lwChart.applyOptions({width:container.clientWidth,height:container.clientHeight});
+  }).observe(container);
+}
+
+// ── LIVE TICKS ─────────────────────────────────────
 function startTicks(){
   if(tickT)clearInterval(tickT);
   const v=dec===3?0.008:0.00008;
   tickT=setInterval(()=>{
-    if(!candles.length)return;
+    if(!candles.length||!candleSeries)return;
     const last=candles[candles.length-1];
-    const nc=parseFloat((last.c+(Math.random()-.495)*v).toFixed(dec+1));
-    last.c=nc;last.h=Math.max(last.h,nc);last.l=Math.min(last.l,nc);
-    liveRate=nc;updatePrice();
-    if(chart){chart.data.datasets[0].data[chart.data.datasets[0].data.length-1]=nc;chart.update('none');}
+    const micro=(Math.random()-.495)*v;
+    const nc=parseFloat((last.c+micro).toFixed(dec+1));
+    last.c=nc; last.h=Math.max(last.h,nc); last.l=Math.min(last.l,nc);
+    liveRate=nc; updatePrice();
+    // Update last candle on chart
+    candleSeries.update({
+      time:Math.floor(new Date(last.t).getTime()/1000),
+      open:+last.o.toFixed(dec),
+      high:+last.h.toFixed(dec),
+      low:+last.l.toFixed(dec),
+      close:+last.c.toFixed(dec)
+    });
   },2000);
 }
 
+// ── COUNTDOWN ─────────────────────────────────────
 function startCD(){
   if(cdT)clearInterval(cdT);cd=300;
   cdT=setInterval(async()=>{
@@ -201,45 +263,31 @@ function startCD(){
         delete cache[pair+tf];
         candles=await fetchData();
         liveRate=candles[candles.length-1].c;
-        updatePrice();renderChart();
+        updatePrice();renderCandleChart();
         document.getElementById('feedSt').textContent='LIVE';
       }catch{document.getElementById('feedSt').textContent='RETRY';}
     }
   },1000);
 }
 
-function renderChart(){
-  const ctx=document.getElementById('myChart').getContext('2d');
-  if(chart){chart.destroy();chart=null;}
-  const labels=candles.map(c=>{
-    const t=new Date(c.t);
-    const HH=String(t.getHours()).padStart(2,'0'),MM=String(t.getMinutes()).padStart(2,'0');
-    const DD=String(t.getDate()).padStart(2,'0'),mo=String(t.getMonth()+1).padStart(2,'0');
-    return tf==='60min'?`${DD}/${mo} ${HH}:${MM}`:`${HH}:${MM}`;
-  });
-  const grad=ctx.createLinearGradient(0,0,0,500);
-  grad.addColorStop(0,'rgba(0,212,255,0.18)');grad.addColorStop(1,'rgba(0,212,255,0)');
-  chart=new Chart(ctx,{type:'line',data:{labels,datasets:[
-    {label:'Close',data:candles.map(c=>+c.c.toFixed(dec)),borderColor:'#00d4ff',borderWidth:1.5,backgroundColor:grad,fill:true,pointRadius:0,tension:0.3},
-    {label:'High',data:candles.map(c=>+c.h.toFixed(dec)),borderColor:'rgba(0,255,136,.25)',borderWidth:1,borderDash:[2,4],fill:false,pointRadius:0,tension:0.3},
-    {label:'Low',data:candles.map(c=>+c.l.toFixed(dec)),borderColor:'rgba(255,51,102,.25)',borderWidth:1,borderDash:[2,4],fill:false,pointRadius:0,tension:0.3}
-  ]},options:{responsive:true,maintainAspectRatio:false,animation:false,
-    plugins:{legend:{display:false},tooltip:{backgroundColor:'#0d1117',borderColor:'#1a2332',borderWidth:1,titleColor:'#00d4ff',bodyColor:'#c8d8e8',titleFont:{family:'Share Tech Mono'},bodyFont:{family:'Share Tech Mono',size:10},callbacks:{label:c=>`${c.dataset.label}: ${c.parsed.y.toFixed(dec)}`}}},
-    scales:{x:{grid:{color:'rgba(26,35,50,.6)'},ticks:{color:'#4a6070',font:{family:'Share Tech Mono',size:8},maxTicksLimit:12}},y:{position:'right',grid:{color:'rgba(26,35,50,.6)'},ticks:{color:'#4a6070',font:{family:'Share Tech Mono',size:8},callback:v=>v.toFixed(dec)}}}}});
-}
-
+// ── CONTROLS ──────────────────────────────────────
 function selPair(p,d,btn){pair=p;dec=d;document.querySelectorAll('.pb').forEach(b=>b.classList.remove('on'));btn.classList.add('on');resetPanel();loadData();}
 function selTF(t,btn){tf=t;document.querySelectorAll('.tb').forEach(b=>b.classList.remove('on'));btn.classList.add('on');resetPanel();loadData();}
 function resetPanel(){
-  document.getElementById('pc').innerHTML=`<div class="fi"><div><span class="k">LOADING </span><span class="vg">Real OHLC data from Alpha Vantage</span></div></div><div class="es"><div class="ei">◎</div><div>LOADING...<br>THEN CLICK ▶ ANALYZE</div></div>`;
+  document.getElementById('pc').innerHTML=`<div class="fi"><div><span class="k">LOADING </span><span class="vg">Real candles from Twelve Data</span></div></div><div class="es"><div class="ei">◎</div><div>LOADING...<br>THEN CLICK ▶ ANALYZE</div></div>`;
   document.getElementById('sb').style.display='none';
 }
 
+// ── PATTERN DETECTION ─────────────────────────────
 function runAnalysis(){
   const btn=document.getElementById('abtn');
   btn.disabled=true;btn.textContent='⟳ SCANNING';
-  document.getElementById('pc').innerHTML='<div class="ls"><div class="sp"></div><div>SCANNING REAL DATA...</div></div>';
-  setTimeout(()=>{try{renderResults(detectPatterns(candles));}catch(e){document.getElementById('pc').innerHTML=`<div class="ebox">Error: ${e.message}</div>`;}btn.disabled=false;btn.textContent='▶ ANALYZE';},400);
+  document.getElementById('pc').innerHTML='<div class="ls"><div class="sp"></div><div>SCANNING REAL CANDLES...</div></div>';
+  setTimeout(()=>{
+    try{renderResults(detectPatterns(candles));}
+    catch(e){document.getElementById('pc').innerHTML=`<div class="ebox">Error: ${e.message}</div>`;}
+    btn.disabled=false;btn.textContent='▶ ANALYZE';
+  },400);
 }
 
 function detectPatterns(data){
@@ -253,20 +301,20 @@ function detectPatterns(data){
   const rc=closes.slice(-40),rH=highs.slice(-40),rL=lows.slice(-40);
   const sl=slope(rc),cur=closes[n-1],rLow=Math.min(...rL),rHigh=Math.max(...rH),rng=rHigh-rLow||vol*5,tStr=Math.abs(sl)/vol;
 
-  if(tStr>0.4){const b=sl>0;patterns.push({name:b?'Uptrend Channel':'Downtrend Channel',completion:Math.min(92,55+Math.round(tStr*15)),confidence:tStr>1.5?'HIGH':tStr>0.7?'MEDIUM':'LOW',description:`${b?'Higher highs & lows':'Lower highs & lows'} confirmed on ${TF_LABEL[tf]} real data`,prediction:b?'Buy dips to rising trendline':'Sell bounces to falling resistance',entry_signal:b?'Buy on pullback to rising support':'Sell on bounce to falling resistance',target:(cur+(b?1:-1)*rng*0.55).toFixed(dec),stop_loss:(cur-(b?1:-1)*rng*0.28).toFixed(dec),bias:b?'BULLISH':'BEARISH'});}
+  if(tStr>0.4){const b=sl>0;patterns.push({name:b?'Uptrend Channel':'Downtrend Channel',completion:Math.min(92,55+Math.round(tStr*15)),confidence:tStr>1.5?'HIGH':tStr>0.7?'MEDIUM':'LOW',description:`${b?'Higher highs & lows':'Lower highs & lows'} on real ${TF_LABEL[tf]} candles`,prediction:b?'Buy dips to rising trendline':'Sell bounces to falling resistance',entry_signal:b?'Buy on pullback to rising support':'Sell on bounce to falling resistance',target:(cur+(b?1:-1)*rng*0.55).toFixed(dec),stop_loss:(cur-(b?1:-1)*rng*0.28).toFixed(dec),bias:b?'BULLISH':'BEARISH'});}
   const pk=peaks(rH,2);
-  if(pk.length>=2){const p1=pk[pk.length-2],p2=pk[pk.length-1],gap=p2.idx-p1.idx,diff=Math.abs(p1.val-p2.val)/rng;if(diff<0.12&&gap>=3&&gap<=25){const neck=Math.min(...rL.slice(p1.idx,p2.idx+1));patterns.push({name:'Double Top',completion:p2.idx>=35?88:62,confidence:diff<0.05?'HIGH':'MEDIUM',description:`Two peaks at ~${((p1.val+p2.val)/2).toFixed(dec)} — confirmed resistance`,prediction:`Sell below neckline ${neck.toFixed(dec)}`,entry_signal:`Sell on close below ${neck.toFixed(dec)}`,target:(neck-(((p1.val+p2.val)/2)-neck)).toFixed(dec),stop_loss:(Math.max(p1.val,p2.val)+rng*.08).toFixed(dec),bias:'BEARISH'});}}
+  if(pk.length>=2){const p1=pk[pk.length-2],p2=pk[pk.length-1],gap=p2.idx-p1.idx,diff=Math.abs(p1.val-p2.val)/rng;if(diff<0.12&&gap>=3&&gap<=25){const neck=Math.min(...rL.slice(p1.idx,p2.idx+1));patterns.push({name:'Double Top',completion:p2.idx>=35?88:62,confidence:diff<0.05?'HIGH':'MEDIUM',description:`Two peaks at ~${((p1.val+p2.val)/2).toFixed(dec)} — real resistance zone`,prediction:`Sell below neckline ${neck.toFixed(dec)}`,entry_signal:`Sell on close below ${neck.toFixed(dec)}`,target:(neck-(((p1.val+p2.val)/2)-neck)).toFixed(dec),stop_loss:(Math.max(p1.val,p2.val)+rng*.08).toFixed(dec),bias:'BEARISH'});}}
   const tr=troughs(rL,2);
-  if(tr.length>=2){const t1=tr[tr.length-2],t2=tr[tr.length-1],gap=t2.idx-t1.idx,diff=Math.abs(t1.val-t2.val)/rng;if(diff<0.12&&gap>=3&&gap<=25){const neck=Math.max(...rH.slice(t1.idx,t2.idx+1));patterns.push({name:'Double Bottom',completion:t2.idx>=35?88:62,confidence:diff<0.05?'HIGH':'MEDIUM',description:`Two troughs at ~${((t1.val+t2.val)/2).toFixed(dec)} — confirmed support`,prediction:`Buy above neckline ${neck.toFixed(dec)}`,entry_signal:`Buy on close above ${neck.toFixed(dec)}`,target:(neck+(neck-((t1.val+t2.val)/2))).toFixed(dec),stop_loss:(Math.min(t1.val,t2.val)-rng*.08).toFixed(dec),bias:'BULLISH'});}}
+  if(tr.length>=2){const t1=tr[tr.length-2],t2=tr[tr.length-1],gap=t2.idx-t1.idx,diff=Math.abs(t1.val-t2.val)/rng;if(diff<0.12&&gap>=3&&gap<=25){const neck=Math.max(...rH.slice(t1.idx,t2.idx+1));patterns.push({name:'Double Bottom',completion:t2.idx>=35?88:62,confidence:diff<0.05?'HIGH':'MEDIUM',description:`Two troughs at ~${((t1.val+t2.val)/2).toFixed(dec)} — real support zone`,prediction:`Buy above neckline ${neck.toFixed(dec)}`,entry_signal:`Buy on close above ${neck.toFixed(dec)}`,target:(neck+(neck-((t1.val+t2.val)/2))).toFixed(dec),stop_loss:(Math.min(t1.val,t2.val)-rng*.08).toFixed(dec),bias:'BULLISH'});}}
   if(pk.length>=2&&tr.length>=2){const hSl=slope(pk.map(p=>p.val)),lSl=slope(tr.map(p=>p.val));
-    if(hSl<-vol*.08&&lSl>vol*.08)patterns.push({name:'Symmetrical Triangle',completion:65,confidence:'MEDIUM',description:'Converging highs & lows — explosive breakout imminent',prediction:`Breakout ${sl>0?'UP':'DOWN'} expected`,entry_signal:`${sl>0?'Buy':'Sell'} on boundary break`,target:(sl>0?rHigh+rng*.6:rLow-rng*.6).toFixed(dec),stop_loss:(sl>0?rLow-rng*.08:rHigh+rng*.08).toFixed(dec),bias:sl>0?'BULLISH':'BEARISH'});
-    else if(hSl<-vol*.08&&Math.abs(lSl)<vol*.04)patterns.push({name:'Descending Triangle',completion:68,confidence:'MEDIUM',description:`Flat support ${rLow.toFixed(dec)}, declining resistance`,prediction:'Breakdown below support expected',entry_signal:`Sell below ${rLow.toFixed(dec)}`,target:(rLow-rng*.65).toFixed(dec),stop_loss:(rHigh+rng*.08).toFixed(dec),bias:'BEARISH'});
+    if(hSl<-vol*.08&&lSl>vol*.08)patterns.push({name:'Symmetrical Triangle',completion:65,confidence:'MEDIUM',description:'Converging real highs & lows — breakout imminent',prediction:`Breakout ${sl>0?'UP':'DOWN'} expected`,entry_signal:`${sl>0?'Buy':'Sell'} on confirmed boundary break`,target:(sl>0?rHigh+rng*.6:rLow-rng*.6).toFixed(dec),stop_loss:(sl>0?rLow-rng*.08:rHigh+rng*.08).toFixed(dec),bias:sl>0?'BULLISH':'BEARISH'});
+    else if(hSl<-vol*.08&&Math.abs(lSl)<vol*.04)patterns.push({name:'Descending Triangle',completion:68,confidence:'MEDIUM',description:`Flat support ${rLow.toFixed(dec)}, declining resistance`,prediction:'Breakdown below flat support expected',entry_signal:`Sell below ${rLow.toFixed(dec)}`,target:(rLow-rng*.65).toFixed(dec),stop_loss:(rHigh+rng*.08).toFixed(dec),bias:'BEARISH'});
     else if(Math.abs(hSl)<vol*.04&&lSl>vol*.08)patterns.push({name:'Ascending Triangle',completion:68,confidence:'MEDIUM',description:`Flat resistance ${rHigh.toFixed(dec)}, rising support`,prediction:'Breakout above resistance expected',entry_signal:`Buy above ${rHigh.toFixed(dec)}`,target:(rHigh+rng*.65).toFixed(dec),stop_loss:(rLow-rng*.08).toFixed(dec),bias:'BULLISH'});}
   if(pk.length>=2&&tr.length>=2){const hSl=slope(pk.map(p=>p.val)),lSl=slope(tr.map(p=>p.val));
-    if(hSl>vol*.08&&lSl>vol*.12&&lSl>hSl)patterns.push({name:'Rising Wedge',completion:72,confidence:'MEDIUM',description:'Converging highs & lows rising — bearish reversal',prediction:'Sharp drop expected on lower trendline break',entry_signal:'Sell on close below lower trendline',target:(rLow-rng*.45).toFixed(dec),stop_loss:(rHigh+rng*.12).toFixed(dec),bias:'BEARISH'});
-    else if(hSl<-vol*.08&&lSl<-vol*.04&&hSl<lSl)patterns.push({name:'Falling Wedge',completion:72,confidence:'MEDIUM',description:'Converging highs & lows falling — bullish reversal',prediction:'Sharp rally expected on upper trendline break',entry_signal:'Buy on close above upper trendline',target:(rHigh+rng*.45).toFixed(dec),stop_loss:(rLow-rng*.12).toFixed(dec),bias:'BULLISH'});}
+    if(hSl>vol*.08&&lSl>vol*.12&&lSl>hSl)patterns.push({name:'Rising Wedge',completion:72,confidence:'MEDIUM',description:'Converging highs & lows rising — bearish reversal',prediction:'Sharp drop on lower trendline break',entry_signal:'Sell on close below lower trendline',target:(rLow-rng*.45).toFixed(dec),stop_loss:(rHigh+rng*.12).toFixed(dec),bias:'BEARISH'});
+    else if(hSl<-vol*.08&&lSl<-vol*.04&&hSl<lSl)patterns.push({name:'Falling Wedge',completion:72,confidence:'MEDIUM',description:'Converging highs & lows falling — bullish reversal',prediction:'Sharp rally on upper trendline break',entry_signal:'Buy on close above upper trendline',target:(rHigh+rng*.45).toFixed(dec),stop_loss:(rLow-rng*.12).toFixed(dec),bias:'BULLISH'});}
   if(n>=20){const pre=closes.slice(-20,-10),flag=closes.slice(-10),pSl=slope(pre),fSl=slope(flag),fRng=Math.max(...flag)-Math.min(...flag);
-    if(Math.abs(pSl)>vol*1.2&&fRng<rng*.3&&Math.sign(fSl)!==Math.sign(pSl)){const b=pSl>0;patterns.push({name:b?'Bull Flag':'Bear Flag',completion:58,confidence:'MEDIUM',description:`Sharp ${b?'up':'down'}move + tight consolidation`,prediction:`Continuation ${b?'up':'down'} after breakout`,entry_signal:b?`Buy above ${Math.max(...flag).toFixed(dec)}`:`Sell below ${Math.min(...flag).toFixed(dec)}`,target:(b?rHigh+rng*.7:rLow-rng*.7).toFixed(dec),stop_loss:(b?Math.min(...flag)-vol*3:Math.max(...flag)+vol*3).toFixed(dec),bias:b?'BULLISH':'BEARISH'});}}
+    if(Math.abs(pSl)>vol*1.2&&fRng<rng*.3&&Math.sign(fSl)!==Math.sign(pSl)){const b=pSl>0;patterns.push({name:b?'Bull Flag':'Bear Flag',completion:58,confidence:'MEDIUM',description:`Sharp ${b?'up':'down'}move + tight consolidation on real chart`,prediction:`Continuation ${b?'up':'down'} after breakout`,entry_signal:b?`Buy above ${Math.max(...flag).toFixed(dec)}`:`Sell below ${Math.min(...flag).toFixed(dec)}`,target:(b?rHigh+rng*.7:rLow-rng*.7).toFixed(dec),stop_loss:(b?Math.min(...flag)-vol*3:Math.max(...flag)+vol*3).toFixed(dec),bias:b?'BULLISH':'BEARISH'});}}
   const dL=(cur-rLow)/rng,dH=(rHigh-cur)/rng;
   if(dL<0.10&&sl>=0&&!patterns.some(p=>p.bias==='BULLISH'))patterns.push({name:'Support Bounce',completion:50,confidence:'LOW',description:`Price at key support ${rLow.toFixed(dec)}`,prediction:'Bounce up if support holds',entry_signal:`Buy near ${rLow.toFixed(dec)}`,target:(rLow+rng*.45).toFixed(dec),stop_loss:(rLow-rng*.12).toFixed(dec),bias:'BULLISH'});
   else if(dH<0.10&&sl<=0&&!patterns.some(p=>p.bias==='BEARISH'))patterns.push({name:'Resistance Rejection',completion:50,confidence:'LOW',description:`Price at key resistance ${rHigh.toFixed(dec)}`,prediction:'Pullback if resistance holds',entry_signal:`Sell near ${rHigh.toFixed(dec)}`,target:(rHigh-rng*.45).toFixed(dec),stop_loss:(rHigh+rng*.12).toFixed(dec),bias:'BEARISH'});
@@ -275,7 +323,7 @@ function detectPatterns(data){
   const overall_bias=bC>beC?'BULLISH':beC>bC?'BEARISH':'NEUTRAL';
   const hC=patterns.filter(p=>p.confidence==='HIGH').length;
   const signal_strength=hC>=2?'STRONG':patterns.length>=2?'MODERATE':'WEAK';
-  const summary=patterns.length===0?'No clear patterns on this timeframe — try 5M or 15M':`${patterns.length} pattern(s) on ${TF_LABEL[tf]}. ${overall_bias} bias — ${signal_strength.toLowerCase()} signal.`;
+  const summary=patterns.length===0?'No clear patterns — try 5M or 15M timeframe':`${patterns.length} pattern(s) on real ${TF_LABEL[tf]} data. ${overall_bias} bias — ${signal_strength.toLowerCase()} signal.`;
   patterns.sort((a,b)=>b.completion-a.completion);
   return{patterns:patterns.slice(0,4),overall_bias,signal_strength,summary};
 }
@@ -297,6 +345,7 @@ function renderResults(r){
   document.getElementById('sCnt').textContent=pats.length;document.getElementById('sStr').textContent=r.signal_strength||'--';
   document.getElementById('sb').style.display='flex';
 }
+
 loadData();
 </script>
 </body>
