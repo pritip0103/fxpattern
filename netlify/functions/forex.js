@@ -3,25 +3,68 @@ exports.handler = async (event) => {
   if (!pair || !interval) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing params' }) };
   }
-  const map = {
-    EURUSD:['EUR','USD'],GBPUSD:['GBP','USD'],
-    USDJPY:['USD','JPY'],AUDUSD:['AUD','USD'],USDCHF:['USD','CHF']
+
+  // Twelve Data symbol format: EUR/USD
+  const symbolMap = {
+    EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD',
+    USDJPY: 'USD/JPY', AUDUSD: 'AUD/USD', USDCHF: 'USD/CHF'
   };
-  const [from, to] = map[pair] || ['EUR','USD'];
-  const KEY = 'Y8DVKLIWJH7KXK0F';
-  const url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=${from}&to_symbol=${to}&interval=${interval}&outputsize=compact&apikey=${KEY}`;
+  const symbol = symbolMap[pair] || 'EUR/USD';
+
+  // Twelve Data interval format: 1min, 5min, 15min, 1h
+  const intervalMap = {
+    '1min': '1min', '5min': '5min', '15min': '15min', '60min': '1h'
+  };
+  const tdInterval = intervalMap[interval] || '5min';
+
+  const KEY = 'f8d244d577e143469d77235e4b74c5fa';
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${tdInterval}&outputsize=150&apikey=${KEY}&format=JSON`;
+
   try {
     const res = await fetch(url);
     const data = await res.json();
-    if (data['Note']||data['Information']) return {statusCode:429,headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({error:'Rate limit — wait 1 min'})};
-    const key = `Time Series FX (${interval})`;
-    const series = data[key];
-    if (!series) return {statusCode:404,headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({error:'No data returned'})};
-    const candles = Object.entries(series)
-      .map(([t,v])=>({t,o:+v['1. open'],h:+v['2. high'],l:+v['3. low'],c:+v['4. close']}))
-      .sort((a,b)=>a.t.localeCompare(b.t)).slice(-100);
-    return {statusCode:200,headers:{'Access-Control-Allow-Origin':'*','Content-Type':'application/json'},body:JSON.stringify({candles})};
-  } catch(e) {
-    return {statusCode:500,headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({error:e.message})};
+
+    if (data.status === 'error') {
+      return {
+        statusCode: 400,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: data.message || 'API error' })
+      };
+    }
+
+    if (!data.values || !data.values.length) {
+      return {
+        statusCode: 404,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: 'No data — market may be closed' })
+      };
+    }
+
+    // Parse into candles — Twelve Data returns newest first, so reverse
+    const candles = data.values
+      .map(v => ({
+        t: v.datetime,
+        o: parseFloat(v.open),
+        h: parseFloat(v.high),
+        l: parseFloat(v.low),
+        c: parseFloat(v.close)
+      }))
+      .reverse();
+
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ candles, meta: data.meta })
+    };
+
+  } catch (e) {
+    return {
+      statusCode: 500,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ error: e.message })
+    };
   }
 };
